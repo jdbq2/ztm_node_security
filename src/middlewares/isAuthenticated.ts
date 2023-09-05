@@ -5,7 +5,7 @@ export const isAuthenticated = async (
     res: Response,
     next: NextFunction
 ) => {
-    const isLoggedIn = false;
+    const isLoggedIn = req.isAuthenticated() && req.user;
     if (!isLoggedIn) {
         return res.status(401).json({
             msg: "You must Loggin",

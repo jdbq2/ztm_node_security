@@ -3,79 +3,115 @@ import https from "https";
 import express from "express";
 import path from "path";
 import helmet from "helmet";
-import "dotenv/config";
-import passport from "passport";
-import { Strategy } from "passport-google-oauth20";
+import cookieSession from "cookie-session";
+import passport, { Profile } from "passport";
+import { Strategy, VerifyCallback } from "passport-google-oauth20";
 import { isAuthenticated } from "./middlewares/isAuthenticated";
+import "dotenv/config";
 
-// OBJETO CONFIGURACION CREDECIALES DEL GOOGLE
+// Objeto auxiliar de configuracion para el proceso de autenticacion
 const config = {
     CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
     CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
+    COOKIE_KEY_1: process.env.COOKIE_KEY_1,
+    COOKIE_KEY_2: process.env.COOKIE_KEY_2,
 };
 
-//OPCIONES DE CONFIGURACION DE LA ESTRATEGIA DE PASSPORT
+//Valores necesarios para el proceso de autenticacion
 const AUTH_OPTIONS = {
     callbackURL: "/auth/google/callback",
     clientID: config.CLIENT_ID!,
     clientSecret: config.CLIENT_SECRET!,
 };
 
-//FUNCION CALLBACK CUANDO PASSPORT HAGA EL LOGIN
+//Funcion de verificacion que passport usa al momento de hacer la autenticacion
 function verifyCallback(
-    accessToken: any,
-    refreshToken: any,
-    profile: any,
-    done: any
+    accessToken: string,
+    refreshToken: string,
+    profile: Profile,
+    done: VerifyCallback
 ) {
-    console.log("Perfil de Google ===> " + JSON.stringify(profile));
     done(null, profile);
 }
 
-//INSTANCIAMOS EL SERVER Y CREAMOS LOS MIDDLEWARES
+//Instanciamos el server y creamos los middlewares
 const app = express();
-app.use(helmet()); // Headers de seguridad
-app.use(passport.initialize()); //Passport
-passport.use(new Strategy(AUTH_OPTIONS, verifyCallback)); //Estrategia utilizada por passport
-app.use(express.static("public")); //servimos archivos estaticos de la carpeta public
+// Headers de seguridad
+app.use(helmet());
+//Middleware para la creacion de la cookie
+app.use(
+    cookieSession({
+        name: "session",
+        maxAge: 25 * 60 * 60 * 1000,
+        keys: [config.COOKIE_KEY_1!, config.COOKIE_KEY_2!],
+    })
+);
+//Instanciamos Passport
+app.use(passport.initialize());
+//Crea la sesion y permite el llamado a las funciones de serializacion de la cookie
+app.use(passport.session());
+//Estrategia utilizada por passport
+passport.use(new Strategy(AUTH_OPTIONS, verifyCallback));
 
-//RUTAS
+// Metodo para salvar la sesion en la cookie
+passport.serializeUser((user: any, done) => {
+    done(null, user.id);
+});
+//Metodo para leer la sesion de la cookie
+passport.deserializeUser((userId: any, done) => {
+    done(null, userId);
+});
+//servimos archivos estaticos de la carpeta public
+app.use(express.static("public"));
+
+//Ruta para hacer la autenticacion por google con passport
 app.get(
     "/auth/google",
     passport.authenticate("google", {
         scope: ["email"],
     })
 );
+//Ruta con el callback del inicio de sesion por google usando Oauth20
 app.get(
     "/auth/google/callback",
     passport.authenticate("google", {
         failureRedirect: "/failure",
         successRedirect: "/",
-        session: false,
+        session: true,
     }),
     (req, res) => {
         console.log("Google called us back");
     }
 );
-app.get("/auth/logout", (req, res) => {});
+app.get("/auth/logout", (req, res) => {
+    req.logout(function (err) {
+        if (err) {
+            console.log(err);
+        }
+    });
+    return res.redirect("/");
+});
 
+//Ruta protegida solo para usuarios autenticados
 app.get("/secret", isAuthenticated, (req, res) => {
     res.status(200).send("This is the secret!!!");
 });
 
+//Ruta a la que hacemos la redireccion si algo sale mal en el proceso de autenticacion
 app.get("/failure", (req, res) => {
     res.status(500).json({
         error: "Server authentication error",
     });
 });
-//RUTA QUE SIRVE LOS ARCHIVOS HTML
+
+//Ruta que sirve los archivos del cliente (HTML)
 app.get("/*", (req, res) => {
     res.status(200).sendFile(
         path.join(__dirname, "..", "/public", "/index.html")
     );
 });
 
-//SERVIDOR CON LA CONFIGURACION SLL CREADA CON OPENSSL DE FORMA LOCAL
+//Servidor instanciado con la configuracion SSL de forma local
 https
     .createServer(
         {
